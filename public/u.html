@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docket</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600&family=Inter:wght@400;500&display=swap');
+  body { margin:0; background:#F6F2E9; color:#26332B; font-family:'Inter',sans-serif; }
+  .wrap { max-width:480px; margin:0 auto; padding:28px 18px 60px; }
+  h1 { font-family:'Source Serif 4',serif; margin:0 0 4px; }
+  .connect { background:#F5E2D6; border-radius:8px; padding:12px; font-size:13px; margin-bottom:20px; }
+  .connect a { color:#B65B36; font-weight:600; }
+  .connect.ok { background:#E4EBDE; color:#4F6B4F; }
+  .composer { background:#FFFDF8; border:1px solid #DCD5C1; border-radius:10px; padding:14px; margin-bottom:22px; }
+  .composer input[type="text"] { width:100%; border:none; border-bottom:1px solid #E3DCC9; font-family:'Source Serif 4',serif; font-size:16px; padding:4px 2px 10px; margin-bottom:10px; box-sizing:border-box; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  select, input[type="datetime-local"], input[type="time"] { border:1px solid #DCD5C1; border-radius:6px; padding:7px 8px; font-size:13px; background:#F6F2E9; }
+  .days { display:flex; gap:5px; margin-top:8px; }
+  .day-btn { width:32px; height:32px; border-radius:50%; border:1px solid #DCD5C1; background:#F6F2E9; color:#6B6E5F; font-size:12px; cursor:pointer; }
+  .day-btn.on { background:#4F6B4F; border-color:#4F6B4F; color:#fff; }
+  .add-btn { border:none; background:#4F6B4F; color:#fff; padding:8px 14px; border-radius:6px; cursor:pointer; }
+  .task { display:flex; gap:10px; align-items:flex-start; padding:12px 4px; border-bottom:1px solid #E3DCC9; }
+  .check { width:20px; height:20px; border-radius:50%; border:1.5px solid #4F6B4F; background:transparent; cursor:pointer; flex-shrink:0; }
+  .check.done { background:#4F6B4F; }
+  .task-title { font-family:'Source Serif 4',serif; font-size:16px; flex:1; }
+  .task-title.done { color:#6B6E5F; text-decoration:line-through; }
+  .meta { font-size:12px; color:#6B6E5F; margin-top:3px; }
+  .del { background:none; border:none; color:#B5AF9C; font-size:18px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="who">Docket</h1>
+  <div class="connect" id="connectBox">Loading...</div>
+
+  <div class="composer">
+    <input type="text" id="taskInput" placeholder="What needs doing?" />
+    <div class="row">
+      <select id="repeat">
+        <option value="none">One-off</option>
+        <option value="daily">Every day</option>
+        <option value="custom">Choose days</option>
+      </select>
+      <input type="datetime-local" id="dueInput" />
+      <input type="time" id="timeInput" style="display:none;" />
+      <button class="add-btn" id="addBtn">Add</button>
+    </div>
+    <div class="days" id="daysPicker" style="display:none;"></div>
+  </div>
+
+  <div id="taskList"></div>
+</div>
+<script>
+  const userId = new URLSearchParams(window.location.search).get('id');
+  const DAY_LABELS = ['S','M','T','W','T','F','S'];
+  const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let selectedDays = [];
+
+  const daysPicker = document.getElementById('daysPicker');
+  DAY_LABELS.forEach((label, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'day-btn'; btn.textContent = label;
+    btn.onclick = () => {
+      selectedDays = selectedDays.includes(idx) ? selectedDays.filter(d => d !== idx) : [...selectedDays, idx];
+      btn.classList.toggle('on');
+    };
+    daysPicker.appendChild(btn);
+  });
+
+  const repeatSel = document.getElementById('repeat');
+  const dueInput = document.getElementById('dueInput');
+  const timeInput = document.getElementById('timeInput');
+  repeatSel.onchange = () => {
+    const mode = repeatSel.value;
+    dueInput.style.display = mode === 'none' ? '' : 'none';
+    timeInput.style.display = mode === 'none' ? 'none' : '';
+    daysPicker.style.display = mode === 'custom' ? 'flex' : 'none';
+  };
+
+  async function loadUser() {
+    const res = await fetch('/api/users/' + userId);
+    const user = await res.json();
+    document.getElementById('who').textContent = user.name + "'s list";
+    const box = document.getElementById('connectBox');
+    if (user.chat_id) {
+      box.className = 'connect ok';
+      box.textContent = 'Telegram connected — reminders will arrive there.';
+    } else {
+      box.className = 'connect';
+      box.innerHTML = 'Reminders need Telegram connected. <a href="https://t.me/' + user.botUsername + '?start=' + userId + '" target="_blank">Tap here, then press Start.</a>';
+    }
+  }
+
+  async function loadTasks() {
+    const res = await fetch('/api/tasks/' + userId);
+    const tasks = await res.json();
+    const list = document.getElementById('taskList');
+    list.innerHTML = '';
+    tasks.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'task';
+      const check = document.createElement('button');
+      check.className = 'check' + (t.done ? ' done' : '');
+      check.onclick = async () => {
+        await fetch('/api/tasks/' + t.id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ done: !t.done }) });
+        loadTasks();
+      };
+      const body = document.createElement('div');
+      body.style.flex = '1';
+      const title = document.createElement('div');
+      title.className = 'task-title' + (t.done ? ' done' : '');
+      title.textContent = t.text;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      if (t.repeat === 'none' && t.due) {
+        meta.textContent = new Date(t.due).toLocaleString();
+      } else if (t.repeat === 'daily') {
+        meta.textContent = 'Every day · ' + t.time;
+      } else if (t.repeat === 'custom') {
+        meta.textContent = (t.days || []).map(d => DAY_NAMES[d]).join(', ') + ' · ' + t.time;
+      }
+      body.appendChild(title);
+      body.appendChild(meta);
+      const del = document.createElement('button');
+      del.className = 'del'; del.textContent = '\u00d7';
+      del.onclick = async () => { await fetch('/api/tasks/' + t.id, { method: 'DELETE' }); loadTasks(); };
+      row.appendChild(check); row.appendChild(body); row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
+  document.getElementById('addBtn').onclick = async () => {
+    const text = document.getElementById('taskInput').value.trim();
+    if (!text) return;
+    const mode = repeatSel.value;
+    const payload = { userId, text, repeat: mode };
+    if (mode === 'none') {
+      if (!dueInput.value) return;
+      payload.due = new Date(dueInput.value).toISOString();
+    } else {
+      if (!timeInput.value) return;
+      payload.time = timeInput.value;
+      if (mode === 'custom') payload.days = selectedDays;
+    }
+    await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    document.getElementById('taskInput').value = '';
+    dueInput.value = ''; timeInput.value = ''; selectedDays = [];
+    document.querySelectorAll('.day-btn.on').forEach(b => b.classList.remove('on'));
+    loadTasks();
+  };
+
+  loadUser();
+  loadTasks();
+</script>
+</body>
+</html>
